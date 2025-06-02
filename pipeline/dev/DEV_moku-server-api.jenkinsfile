@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    environment {
+        TARGET_BRANCH = 'dev'
+        GITHUB_REPO = 'https://github.com/moku-run/moku-server-api.git'
+
+        BUILD_DIR = 'build/libs'
+
+        DOCKER_DESKTOP = 'docker --context desktop-linux'
+        IMAGE_NAME = 'moku-server-api'
+        CONTAINER_NAME = 'moku-server-api-container'
+
+        DOCKER_FILE = 'Dockerfile'
+
+        SPRING_PROFILES = 'dev'
+    }
+
+    stages {
+        stage('🐈‍⬛ Git Checkout') {
+            steps {
+                sh 'git remote prune origin || true'
+                git branch: "${TARGET_BRANCH}", url: "${GITHUB_REPO}"
+            }
+        }
+
+        stage('🔐 Inject Secrets') {
+            steps {
+                    withCredentials([
+                        file(credentialsId: 'DEV_jwt-config', variable: 'JWT_CONFIG_FILE'),
+                        file(credentialsId: 'DEV_keystore', variable: 'KEYSTORE_FILE'),
+                        file(credentialsId: 'DEV_application-dev-yml', variable: 'DEV_YML_FILE')
+                    ]) {
+                        sh """
+                            mkdir -p \$WORKSPACE/src/main/resources/dev/secrets/cert
+                            mkdir -p \$WORKSPACE/src/main/resources/dev/secrets/jwt
+
+                            cp -f \$KEYSTORE_FILE \$WORKSPACE/src/main/resources/dev/secrets/cert/keystore.p12
+                            cp -f \$JWT_CONFIG_FILE \$WORKSPACE/src/main/resources/dev/secrets/jwt/jwt-config.yml
+                            cp -f \$DEV_YML_FILE \$WORKSPACE/src/main/resources/application-dev.yml
+                        """
+                    }
+                }
+        }
+
+        stage('🚀 Project Build') {
+           steps {
+               script {
+                   sh './gradlew clean bootJar'
+
+                   def files = sh(script: "ls ${BUILD_DIR}/*.jar", returnStdout: true).trim().split("\n")
+                   if (files.size() == 0) {
+                       error("❌ No JAR file found in ${BUILD_DIR}")
+                   }
+                   env.JAR_NAME = files[0].tokenize('/').last()
+                   echo "✅ Found JAR: ${env.JAR_NAME}"
+               }
+           }
+        }
+
+        stage('🐳 Docker Build') {
+            steps {
+                sh """
+                    export PATH=/usr/local/bin:$PATH
+                    PID=\$(lsof -ti tcp:${env.DEV_moku_server_api_port}) && kill -9 \$PID || true
+                    # lsof -ti tcp:${env.DEV_moku_server_api_port} | xargs -r kill -9 || true
+
+                    ${DOCKER_DESKTOP} stop ${CONTAINER_NAME} || true
+                    ${DOCKER_DESKTOP} rm ${CONTAINER_NAME} || true
+
+                    ${DOCKER_DESKTOP} rmi ${IMAGE_NAME} || true
+
+                    ${DOCKER_DESKTOP} build --build-arg JAR_FILE=${BUILD_DIR}/${JAR_NAME} -f ${DOCKER_FILE} -t ${IMAGE_NAME} .
+                    ${DOCKER_DESKTOP} run -d \
+                    --name ${CONTAINER_NAME} \
+                    -p ${env.DEV_moku_server_api_port}:${env.DEV_moku_server_api_port} \
+                    -e SPRING_PROFILES_ACTIVE=${SPRING_PROFILES} \
+                    ${IMAGE_NAME}
+                """
+            }
+        }
+    }
+}

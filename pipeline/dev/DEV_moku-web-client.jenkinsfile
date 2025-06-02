@@ -1,0 +1,57 @@
+pipeline {
+    agent any
+
+    environment {
+        TARGET_BRANCH = 'dev'
+        GITHUB_REPO = 'https://github.com/moku-run/moku-client-web.git'
+
+        NODE_VERSION = '20.19.0'
+
+        DOCKER_DESKTOP = 'docker --context desktop-linux'
+        IMAGE_NAME = 'moku-web-client'
+        CONTAINER_NAME = 'moku-web-client-container'
+        APP_PORT = ${env.moku-web-client-port}
+    }
+
+    stages {
+        stage('🐈‍⬛ Git Checkout') {
+            steps {
+                sh 'git remote prune origin || true'
+                git branch: "${TARGET_BRANCH}", url: "${GITHUB_REPO}"
+            }
+        }
+
+        stage('🚀 Project Build') {
+            steps {
+                sh """
+                    export NVM_DIR="\$HOME/.nvm"
+                    [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \\. "/opt/homebrew/opt/nvm/nvm.sh"
+
+                    nvm install ${NODE_VERSION}
+                    nvm use ${NODE_VERSION}
+
+                    npm install
+                    npm run build
+                """
+            }
+        }
+
+        stage('🐳 Docker Build') {
+            steps {
+                sh """
+                    export PATH=/usr/local/bin
+                    PID=\$(lsof -ti tcp:${APP_PORT}) && kill -9 \$PID || true
+
+                    ${DOCKER_DESKTOP} stop ${CONTAINER_NAME} || true
+                    ${DOCKER_DESKTOP} rm ${CONTAINER_NAME} || true
+
+                    ${DOCKER_DESKTOP} rmi ${IMAGE_NAME} || true
+
+                    ${DOCKER_DESKTOP} build -t ${IMAGE_NAME} .
+
+                    ${DOCKER_DESKTOP} run -d --name ${CONTAINER_NAME} -p ${APP_PORT}:${APP_PORT} ${IMAGE_NAME}
+                """
+            }
+        }
+    }
+}
