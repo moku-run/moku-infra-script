@@ -17,6 +17,12 @@ pipeline {
     }
 
     stages {
+        stage('🧹 PRE: Workspace clean up') {
+            steps {
+                cleanWs()
+            }
+        }
+
         stage('🐈‍⬛ Git Checkout') {
             steps {
                 sh 'git remote prune origin || true'
@@ -77,6 +83,12 @@ pipeline {
                     -e SPRING_PROFILES_ACTIVE=${SPRING_PROFILES} \
                     ${IMAGE_NAME}
                 """
+            }
+        }
+
+        stage('🧹 POST: Workspace clean up') {
+            steps {
+                cleanWs()
             }
         }
     }
