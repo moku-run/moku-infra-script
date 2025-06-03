@@ -68,8 +68,6 @@ pipeline {
             steps {
                 sh """
                     export PATH=/usr/local/bin:$PATH
-                    PID=\$(lsof -ti tcp:${env.DEV_moku_server_api_port}) && kill -9 \$PID || true
-                    # lsof -ti tcp:${env.DEV_moku_server_api_port} | xargs -r kill -9 || true
 
                     ${DOCKER_DESKTOP} stop ${CONTAINER_NAME} || true
                     ${DOCKER_DESKTOP} rm ${CONTAINER_NAME} || true
