@@ -14,8 +14,6 @@ pipeline {
         IMAGE_NAME = 'moku-server-api'
         CONTAINER_NAME = 'moku-server-api-container'
 
-        DOCKER_FILE = 'Dockerfile'
-
         SPRING_PROFILES = 'dev'
     }
 

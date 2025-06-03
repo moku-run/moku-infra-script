@@ -1,0 +1,103 @@
+pipeline {
+    agent any
+
+    environment {
+        CLIENT_GIT_TARGET_BRANCH = 'dev'
+        CLIENT_GIT_GITHUB_REPO = 'https://github.com/moku-run/moku-client-web.git'
+
+        INFRA_GIT_TARGET_BRANCH = 'main'
+        INFRA_GIT_GITHUB_REPO = 'https://github.com/moku-run/moku-infra-script.git'
+
+        NODE_VERSION = '20.19.0'
+
+        DOCKER_DESKTOP = 'docker --context desktop-linux'
+        IMAGE_NAME = 'moku-web-client'
+        CONTAINER_NAME = 'moku-web-client-container'
+    }
+
+    stages {
+        stage('🧹 PRE: Workspace clean up') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('🐈‍⬛ DEV_moku client web Git Clone') {
+            steps {
+                dir('web-repo') {
+                    sh 'git remote prune origin || true'
+                    git branch: "${CLIENT_GIT_TARGET_BRANCH}", url: "${CLIENT_GIT_GITHUB_REPO}"
+                }
+            }
+        }
+
+        stage('🐈‍⬛ DEV_moku infra script Git Clone') {
+            steps {
+                dir('infra-repo') {
+                    sh 'git remote prune origin || true'
+                    git branch: "${INFRA_GIT_TARGET_BRANCH}", url: "${INFRA_GIT_GITHUB_REPO}"
+                }
+            }
+        }
+
+        stage('🔐 Inject Secrets') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'DEV_private-key', variable: 'PRIVATE_KEY'),
+                    file(credentialsId: 'DEV_certificate', variable: 'CERTIFICATE'),
+                    file(credentialsId: 'DEV_env-development', variable: 'ENV_DEVELOPMENT'),
+                ]) {
+                    sh """
+                        mkdir -p \$WORKSPACE/web-repo/secrets/certs
+
+                        cp -f \$PRIVATE_KEY \$WORKSPACE/web-repo/secrets/certs/private.key
+                        cp -f \$CERTIFICATE \$WORKSPACE/web-repo/secrets/certs/certificate.crt
+                        cp -f \$ENV_DEVELOPMENT \$WORKSPACE/web-repo/.env.development
+                    """
+                }
+            }
+        }
+
+        stage('🚀 Project Build') {
+            steps {
+                dir('web-repo') {
+                    sh """
+                        export NVM_DIR="\$HOME/.nvm"
+                        [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \\. "/opt/homebrew/opt/nvm/nvm.sh"
+
+                        nvm install ${NODE_VERSION}
+                        nvm use ${NODE_VERSION}
+
+                        npm install
+                        npm run build
+                    """
+                }
+            }
+        }
+
+        stage('🐳 Docker Build') {
+            steps {
+                dir('web-repo') {
+                    sh """
+                        export PATH=/usr/local/bin:$PATH
+
+                        ${DOCKER_DESKTOP} stop ${CONTAINER_NAME} || true
+                        ${DOCKER_DESKTOP} rm ${CONTAINER_NAME} || true
+                        ${DOCKER_DESKTOP} rmi ${IMAGE_NAME} || true
+
+                        ${DOCKER_DESKTOP} build \
+                          --build-arg BUILD_DIR=web-repo/dist \
+                          -f ../infra-repo/docker/dev/client/Dockerfile \
+                          -t ${IMAGE_NAME} \
+                          .
+
+                        ${DOCKER_DESKTOP} run -d \
+                         --name ${CONTAINER_NAME} \
+                         -p ${env.DEV_moku_web_client_port}:${env.DEV_moku_web_client_port} \
+                         ${IMAGE_NAME}
+                    """
+                }
+            }
+        }
+    }
+}
